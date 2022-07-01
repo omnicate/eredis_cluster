@@ -302,7 +302,7 @@ next_node_in_slots_maps(_SlotsMaps, _Options, _Iterator) ->
 
 %% Connect to an init node, fetch cluster info and disconnect again
 get_cluster_info_from_init_nodes([], _Options, _Query, _FailFn, ErrorList) ->
-    throw({reply, {error, {cannot_connect_to_cluster, ErrorList}}, #state{}});
+    throw({noreply, #state{}});
 get_cluster_info_from_init_nodes([Node|Nodes], Options, Query, FailFn, ErrorList) ->
     case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Connection} ->

@@ -801,8 +801,8 @@ handle_transaction_result(Result, Cluster, Version) ->
         %% If we detect a node went down, we should probably refresh
         %% the slot mapping.
         {error, no_connection} ->
-            eredis_cluster_monitor:refresh_mapping(Cluster, Version),
-            retry;
+            eredis_cluster_monitor:async_refresh_mapping(Cluster, Version),
+            {error, no_connection};
 
         %% If the tcp connection is closed (connection timeout), the redis worker
         %% will try to reconnect, thus the connection should be recovered for

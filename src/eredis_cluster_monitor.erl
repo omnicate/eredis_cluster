@@ -461,10 +461,8 @@ connect_all_slots(PoolSup, SlotsMapList) ->
 connect_([], _Options, State) ->
     {ok, State};
 connect_(InitNodes, Options, State) ->
-    %% Keep the new init nodes/options in the returned state even on
-    %% failure, so a subsequent refresh can retry against them instead of
-    %% being stuck with whatever (possibly empty) init nodes were set
-    %% before.
+    %% Keep the new init nodes/options even on failure, so a later retry
+    %% has something to connect to.
     NewState = State#state{
         init_nodes = [#node{address = A, port = P} || {A, P} <- InitNodes],
         node_options = Options
@@ -518,8 +516,7 @@ handle_call({reload_slots_map, Version}, _From, #state{version=Version} = State)
         {ok, NewState} ->
             {reply, ok, NewState};
         {error, Reason} ->
-            %% Keep the existing state (init nodes, slot map, etc.) so the
-            %% cluster can still recover from a later refresh attempt.
+            %% Keep existing state so a later refresh can still recover.
             {reply, {error, Reason}, State}
     end;
 handle_call({reload_slots_map, _}, _From, State) ->

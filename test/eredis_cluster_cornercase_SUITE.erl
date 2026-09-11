@@ -95,12 +95,9 @@ handle_watch_get_multi_set_exec(Sock, Key, GetValue, ExpectSet, FailOrPass) ->
                    end,
     ok = gen_tcp:send(Sock, ExecResponse).
 
-%% Regression test for a bug where a failed connect (all init nodes
-%% unreachable) wiped the monitor's state down to a blank #state{}
-%% (including slots_table, which becomes `undefined'). A later connect
-%% attempt to reachable nodes would then crash the monitor instead of
-%% succeeding, because create_slots_cache/2 is called with an undefined
-%% ets table. The fix keeps the previous (valid) state around on failure.
+%% Regression test: a failed connect to unreachable init nodes used to
+%% wipe the monitor's state, crashing a later connect instead of
+%% succeeding. The fix keeps the previous state around on failure.
 connect_survives_unreachable_init_nodes(_Config) ->
     Cluster = connect_survives_unreachable_init_nodes,
 

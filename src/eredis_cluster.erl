@@ -127,10 +127,8 @@ connect(InitServers, Options) ->
 %% Failes with error badarg if the cluster name is already in use as a
 %% registered name of some other process.
 %%
-%% Returns `{error, Reason}' if none of the init nodes could be reached.
-%% The given init nodes and options are kept regardless, so a later
-%% `refresh_mapping/1,2' or another `connect/2,3' call can retry against
-%% them.
+%% Returns `{error, Reason}' if no init node could be reached, but keeps
+%% the given init nodes/options so a later retry can use them.
 %% @end
 %% =============================================================================
 -spec connect(Cluster, InitServers, Options) -> ok | {error, term()}

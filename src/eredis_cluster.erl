@@ -100,7 +100,7 @@ stop(_State) ->
 %% in the cluster are retrieved from one of the init nodes.
 %% @end
 %% =============================================================================
--spec connect(InitServers) -> ok
+-spec connect(InitServers) -> ok | {error, term()}
               when InitServers :: [{Address :: string(),
                                     Port :: inet:port_number()}].
 connect(InitServers) ->
@@ -113,7 +113,7 @@ connect(InitServers) ->
 %% provided, can be used to override options set using `application:set_env/3'.
 %% @end
 %% =============================================================================
--spec connect(InitServers, Options) -> ok
+-spec connect(InitServers, Options) -> ok | {error, term()}
               when InitServers :: [{Address :: string(),
                                     Port :: inet:port_number()}],
                    Options :: options().
@@ -126,9 +126,12 @@ connect(InitServers, Options) ->
 %%
 %% Failes with error badarg if the cluster name is already in use as a
 %% registered name of some other process.
+%%
+%% Returns `{error, Reason}' if no init node could be reached, but keeps
+%% the given init nodes/options so a later retry can use them.
 %% @end
 %% =============================================================================
--spec connect(Cluster, InitServers, Options) -> ok
+-spec connect(Cluster, InitServers, Options) -> ok | {error, term()}
               when Cluster :: atom(),
                    InitServers :: [{Address :: string(),
                                     Port :: inet:port_number()}],

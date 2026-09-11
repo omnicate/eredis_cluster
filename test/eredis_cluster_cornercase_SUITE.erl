@@ -4,7 +4,8 @@
          all/0]).
 
 -export([update_key_some_retries_fail/1,
-         update_key_all_retries_fail/1]).
+         update_key_all_retries_fail/1,
+         connect_survives_unreachable_init_nodes/1]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
@@ -12,7 +13,8 @@
 
 all() ->
     [update_key_all_retries_fail,
-     update_key_some_retries_fail].
+     update_key_some_retries_fail,
+     connect_survives_unreachable_init_nodes].
 
 init_per_testcase(_Tc, Config) ->
     {ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
@@ -92,6 +94,49 @@ handle_watch_get_multi_set_exec(Sock, Key, GetValue, ExpectSet, FailOrPass) ->
                        pass -> <<"*1\r\n+OK\r\n">>
                    end,
     ok = gen_tcp:send(Sock, ExecResponse).
+
+%% Regression test for a bug where a failed connect (all init nodes
+%% unreachable) wiped the monitor's state down to a blank #state{}
+%% (including slots_table, which becomes `undefined'). A later connect
+%% attempt to reachable nodes would then crash the monitor instead of
+%% succeeding, because create_slots_cache/2 is called with an undefined
+%% ets table. The fix keeps the previous (valid) state around on failure.
+connect_survives_unreachable_init_nodes(_Config) ->
+    Cluster = connect_survives_unreachable_init_nodes,
+
+    %% Bind and immediately close a socket so its port refuses connections.
+    {ok, ProbeSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+    {ok, {_, UnreachablePort}} = inet:sockname(ProbeSocket),
+    ok = gen_tcp:close(ProbeSocket),
+
+    ConnectResult = eredis_cluster:connect(Cluster,
+                                           [{"127.0.0.1", UnreachablePort}],
+                                           []),
+    ?assertMatch({error, {cannot_connect_to_cluster, _}}, ConnectResult),
+
+    %% A later connect to a reachable (fake) node must still succeed.
+    {ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+    {ok, {_, Port}} = inet:sockname(ListenSocket),
+    Parent = self(),
+    spawn_link(fun() ->
+                       Parent ! {connect_result,
+                                eredis_cluster:connect(Cluster,
+                                                       [{"127.0.0.1", Port}],
+                                                       [])}
+               end),
+    handler_cluster_slots_connection(ListenSocket),
+    {ok, PoolSocket} = gen_tcp:accept(ListenSocket, 5000),
+    receive
+        {connect_result, Result} ->
+            ?assertEqual(ok, Result)
+    after 5000 ->
+            ct:fail(connect_timeout)
+    end,
+    ?assertMatch([_|_], eredis_cluster:get_all_pools(Cluster)),
+
+    gen_tcp:close(PoolSocket),
+    gen_tcp:close(ListenSocket),
+    eredis_cluster:disconnect(Cluster).
 
 %% Accepts a connection, handles CLUSTER SLOTS and waits for client to close.
 handler_cluster_slots_connection(ListenSocket) ->

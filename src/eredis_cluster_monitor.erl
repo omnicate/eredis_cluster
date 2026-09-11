@@ -126,8 +126,17 @@ get_pool_by_slot(Slot, State) ->
 %% @doc Connect to a init node and get the slot distribution of nodes.
 %% @end
 %% =============================================================================
--spec reload_slots_map(State::#state{}) -> NewState::#state{}.
+-spec reload_slots_map(State::#state{}) ->
+          {ok, NewState::#state{}} | {error, Reason::term()}.
 reload_slots_map(State) ->
+    try
+        {ok, reload_slots_map_(State)}
+    catch
+        throw:{error, Reason} ->
+            {error, Reason}
+    end.
+
+reload_slots_map_(State) ->
     OldSlotsMaps = tuple_to_list(State#state.slots_maps),
 
     Options = get_current_options(State),
@@ -302,7 +311,7 @@ next_node_in_slots_maps(_SlotsMaps, _Options, _Iterator) ->
 
 %% Connect to an init node, fetch cluster info and disconnect again
 get_cluster_info_from_init_nodes([], _Options, _Query, _FailFn, ErrorList) ->
-    throw({noreply, #state{}});
+    throw({error, {cannot_connect_to_cluster, ErrorList}});
 get_cluster_info_from_init_nodes([Node|Nodes], Options, Query, FailFn, ErrorList) ->
     case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Connection} ->
@@ -447,16 +456,26 @@ connect_all_slots(PoolSup, SlotsMapList) ->
         SlotsMap <- SlotsMapList].
 
 -spec connect_([{Address :: string(), Port :: integer()}],
-               Options :: options(), State :: #state{}) -> #state{}.
+               Options :: options(), State :: #state{}) ->
+          {ok, NewState :: #state{}} | {error, Reason :: term(), NewState :: #state{}}.
 connect_([], _Options, State) ->
-    State;
+    {ok, State};
 connect_(InitNodes, Options, State) ->
+    %% Keep the new init nodes/options in the returned state even on
+    %% failure, so a subsequent refresh can retry against them instead of
+    %% being stuck with whatever (possibly empty) init nodes were set
+    %% before.
     NewState = State#state{
         init_nodes = [#node{address = A, port = P} || {A, P} <- InitNodes],
         node_options = Options
     },
 
-    reload_slots_map(NewState).
+    case reload_slots_map(NewState) of
+        {ok, ReloadedState} ->
+            {ok, ReloadedState};
+        {error, Reason} ->
+            {error, Reason, NewState}
+    end.
 
 -spec disconnect_(PoolNodes :: [atom()], State :: #state{}) -> #state{}.
 disconnect_([], State) ->
@@ -495,12 +514,24 @@ init(Cluster) ->
 
 %% @private
 handle_call({reload_slots_map, Version}, _From, #state{version=Version} = State) ->
-    {reply, ok, reload_slots_map(State)};
+    case reload_slots_map(State) of
+        {ok, NewState} ->
+            {reply, ok, NewState};
+        {error, Reason} ->
+            %% Keep the existing state (init nodes, slot map, etc.) so the
+            %% cluster can still recover from a later refresh attempt.
+            {reply, {error, Reason}, State}
+    end;
 handle_call({reload_slots_map, _}, _From, State) ->
     %% Mismatching version. Slots map already reloaded.
     {reply, ok, State};
 handle_call({connect, InitServers, Options}, _From, State) ->
-    {reply, ok, connect_(InitServers, Options, State)};
+    case connect_(InitServers, Options, State) of
+        {ok, NewState} ->
+            {reply, ok, NewState};
+        {error, Reason, NewState} ->
+            {reply, {error, Reason}, NewState}
+    end;
 handle_call({disconnect, PoolNodes}, _From, State) ->
     {reply, ok, disconnect_(PoolNodes, State)};
 handle_call(_Request, _From, State) ->
@@ -518,9 +549,20 @@ handle_cast({async_init, Cluster}, State) ->
                 end,
 
     %% application env options are read later in callstack
-    {noreply, connect_(InitNodes, [], State#state{pool_sup = PoolSup})};
+    case connect_(InitNodes, [], State#state{pool_sup = PoolSup}) of
+        {ok, NewState} ->
+            {noreply, NewState};
+        {error, _Reason, NewState} ->
+            {noreply, NewState}
+    end;
 handle_cast({reload_slots_map, Version}, #state{version = Version} = State) ->
-    {noreply, reload_slots_map(State)};
+    case reload_slots_map(State) of
+        {ok, NewState} ->
+            {noreply, NewState};
+        {error, _Reason} ->
+            %% Keep the existing state so init nodes are not lost.
+            {noreply, State}
+    end;
 handle_cast({reload_slots_map, _OldVersion}, State) ->
     {noreply, State}.
 
